@@ -7,6 +7,7 @@ from torchvision import datasets
 from torchvision import transforms
 
 from .randaugment import RandAugmentMC
+from dataset.iNatDataset import iNatDataset
 
 logger = logging.getLogger(__name__)
 
@@ -17,6 +18,51 @@ cifar100_std = (0.2675, 0.2565, 0.2761)
 normal_mean = (0.5, 0.5, 0.5)
 normal_std = (0.5, 0.5, 0.5)
 
+imagenet_mean = [0.485, 0.456, 0.406]
+imagenet_std = [0.229, 0.224, 0.225]
+
+dset_root = {}
+dset_root['semi_aves'] = '/scratch/group/real-fs/dataset/semi-aves'
+
+
+def get_semi_aves(args, root):
+
+    # define the transform
+    data_transforms = {
+        'labeled': transforms.Compose([
+            transforms.RandomResizedCrop(args.input_size),
+            # transforms.ColorJitter(Brightness=0.4, Contrast=0.4, Color=0.4),
+            transforms.RandomHorizontalFlip(),
+            transforms.ToTensor(),
+            transforms.Normalize(imagenet_mean, imagenet_std)
+        ]),
+
+        'unlabeled': transforms.Compose([
+            TransformFixMatch_aves(mean=imagenet_mean, std=imagenet_std, input_size=args.input_size)
+        ]),
+
+        'test': transforms.Compose([
+            transforms.Resize(args.input_size), 
+            transforms.CenterCrop(args.input_size),
+            transforms.ToTensor(),
+            transforms.Normalize(imagenet_mean, imagenet_std)
+        ])
+    }
+
+    # data_transforms['val'] = data_transforms['test']    
+
+    root_path = dset_root[args.dataset]
+
+    train_labeled_dataset = iNatDataset(root_path, 'l_train_val', args.dataset,
+        transform=data_transforms['labeled'])
+
+    train_unlabeled_dataset = iNatDataset(root_path, 'u_train_in', args.dataset,
+        transform=data_transforms['unlabeled'])
+
+    test_dataset = iNatDataset(root_path, 'test', args.dataset,
+        transform=data_transforms['test'])
+
+    return train_labeled_dataset, train_unlabeled_dataset, test_dataset
 
 def get_cifar10(args, root):
     transform_labeled = transforms.Compose([
@@ -127,6 +173,28 @@ class TransformFixMatch(object):
         strong = self.strong(x)
         return self.normalize(weak), self.normalize(strong)
 
+class TransformFixMatch_aves(object):
+    def __init__(self, mean, std, input_size):
+        self.weak = transforms.Compose([
+            transforms.RandomResizedCrop(input_size),
+            transforms.RandomHorizontalFlip()
+        ])
+        
+        self.strong = transforms.Compose([
+            transforms.RandomResizedCrop(input_size),
+            transforms.RandomHorizontalFlip(),
+            RandAugmentMC(n=2, m=10)
+            ])
+        
+        self.normalize = transforms.Compose([
+            transforms.ToTensor(),
+            transforms.Normalize(mean=mean, std=std)])
+
+    def __call__(self, x):
+        weak = self.weak(x)
+        strong = self.strong(x)
+        return self.normalize(weak), self.normalize(strong)
+
 
 class CIFAR10SSL(datasets.CIFAR10):
     def __init__(self, root, indexs, train=True,
@@ -179,4 +247,5 @@ class CIFAR100SSL(datasets.CIFAR100):
 
 
 DATASET_GETTERS = {'cifar10': get_cifar10,
-                   'cifar100': get_cifar100}
+                   'cifar100': get_cifar100,
+                   'semi_aves': get_semi_aves}

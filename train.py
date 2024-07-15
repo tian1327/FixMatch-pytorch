@@ -19,6 +19,7 @@ from tqdm import tqdm
 
 from dataset.cifar import DATASET_GETTERS
 from utils import AverageMeter, accuracy
+from models.initialize import initialize_model
 
 logger = logging.getLogger(__name__)
 best_acc = 0
@@ -69,21 +70,21 @@ def main():
     parser = argparse.ArgumentParser(description='PyTorch FixMatch Training')
     parser.add_argument('--gpu-id', default='0', type=int,
                         help='id(s) for CUDA_VISIBLE_DEVICES')
-    parser.add_argument('--num-workers', type=int, default=4,
+    parser.add_argument('--num-workers', type=int, default=8,
                         help='number of workers')
     parser.add_argument('--dataset', default='cifar10', type=str,
-                        choices=['cifar10', 'cifar100'],
+                        choices=['cifar10', 'cifar100', 'semi_aves'],
                         help='dataset name')
     parser.add_argument('--num-labeled', type=int, default=4000,
                         help='number of labeled data')
     parser.add_argument("--expand-labels", action="store_true",
                         help="expand labels to fit eval steps")
     parser.add_argument('--arch', default='wideresnet', type=str,
-                        choices=['wideresnet', 'resnext'],
+                        choices=['wideresnet', 'resnext', 'resnet50'],
                         help='dataset name')
     parser.add_argument('--total-steps', default=2**20, type=int,
                         help='number of total steps to run')
-    parser.add_argument('--eval-step', default=1024, type=int,
+    parser.add_argument('--eval-step', default=200, type=int,
                         help='number of eval steps to run')
     parser.add_argument('--start-epoch', default=0, type=int,
                         help='manual epoch number (useful on restarts)')
@@ -124,6 +125,11 @@ def main():
                         help="For distributed training: local_rank")
     parser.add_argument('--no-progress', action='store_true',
                         help="don't use progress bar")
+    parser.add_argument('--init', default='scratch', type=str, 
+            choices=['scratch','imagenet','inat'], 
+            help='flag on for using pre-trained model')    
+    parser.add_argument('--input_size', default=224, type=int, 
+            help='input image size')    
 
     args = parser.parse_args()
     global best_acc
@@ -141,6 +147,26 @@ def main():
                                          depth=args.model_depth,
                                          width=args.model_width,
                                          num_classes=args.num_classes)
+        elif args.arch == 'resnet50':
+            if args.dataset == 'semi_aves':
+                num_classes = 200
+            else:
+                raise NotImplementedError
+            
+            model = initialize_model(args.arch, num_classes, feature_extract=False, 
+                    use_pretrained=args.init=='imagenet', logger=logger)
+            logger.info("==> ResNet50 Model is initialized")
+
+            if args.init == 'inat':
+                ## loading inat pre-trained model
+                ckpt_path = '/scratch/group/real-fs/model_ckpts/inat_resnet50.pth.tar'
+                checkpoint = torch.load(ckpt_path, map_location='cpu')
+                model = torch.nn.DataParallel(model)
+                del checkpoint['state_dict']['module.fc.bias']
+                del checkpoint['state_dict']['module.fc.weight']
+                model.load_state_dict(checkpoint['state_dict'], strict=False)
+                logger.info("==> Loaded INAT pre-trained model from {}".format(ckpt_path))
+
         logger.info("Total params: {:.2f}M".format(
             sum(p.numel() for p in model.parameters())/1e6))
         return model
@@ -233,6 +259,7 @@ def main():
     if args.local_rank not in [-1, 0]:
         torch.distributed.barrier()
 
+    # crate the model
     model = create_model(args)
 
     if args.local_rank == 0:
@@ -327,7 +354,7 @@ def train(args, labeled_trainloader, unlabeled_trainloader, test_loader,
                          disable=args.local_rank not in [-1, 0])
         for batch_idx in range(args.eval_step):
             try:
-                inputs_x, targets_x = labeled_iter.next()
+                inputs_x, targets_x = next(labeled_iter)
                 # error occurs ↓
                 # inputs_x, targets_x = next(labeled_iter)
             except:
@@ -335,12 +362,12 @@ def train(args, labeled_trainloader, unlabeled_trainloader, test_loader,
                     labeled_epoch += 1
                     labeled_trainloader.sampler.set_epoch(labeled_epoch)
                 labeled_iter = iter(labeled_trainloader)
-                inputs_x, targets_x = labeled_iter.next()
+                inputs_x, targets_x = next(labeled_iter)
                 # error occurs ↓
                 # inputs_x, targets_x = next(labeled_iter)
 
             try:
-                (inputs_u_w, inputs_u_s), _ = unlabeled_iter.next()
+                (inputs_u_w, inputs_u_s), _ = next(unlabeled_iter)
                 # error occurs ↓
                 # (inputs_u_w, inputs_u_s), _ = next(unlabeled_iter)
             except:
@@ -348,7 +375,7 @@ def train(args, labeled_trainloader, unlabeled_trainloader, test_loader,
                     unlabeled_epoch += 1
                     unlabeled_trainloader.sampler.set_epoch(unlabeled_epoch)
                 unlabeled_iter = iter(unlabeled_trainloader)
-                (inputs_u_w, inputs_u_s), _ = unlabeled_iter.next()
+                (inputs_u_w, inputs_u_s), _ = next(unlabeled_iter)
                 # error occurs ↓
                 # (inputs_u_w, inputs_u_s), _ = next(unlabeled_iter)
 
