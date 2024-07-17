@@ -23,6 +23,8 @@ from models.initialize import initialize_model
 
 logger = logging.getLogger(__name__)
 best_acc = 0
+best_acc_5 = 0
+best_epoch = 0
 
 
 def save_checkpoint(state, is_best, checkpoint, filename='checkpoint.pth.tar'):
@@ -132,7 +134,11 @@ def main():
             help='input image size')    
 
     args = parser.parse_args()
-    global best_acc
+    global best_acc, best_epoch, best_acc_5
+
+    # update args.out 
+    args.out = args.out + '_{}_{}_bs{}_mu{}_lmd{}_thd{}_lr{}_wd{}_iter{}'.format(
+        args.init, args.dataset, args.batch_size, args.mu, args.lambda_u, args.threshold, args.lr, args.wdecay, args.total_steps)
 
     def create_model(args):
         if args.arch == 'wideresnet':
@@ -294,6 +300,7 @@ def main():
         args.out = os.path.dirname(args.resume)
         checkpoint = torch.load(args.resume)
         best_acc = checkpoint['best_acc']
+        best_epoch = checkpoint['epoch']
         args.start_epoch = checkpoint['epoch']
         model.load_state_dict(checkpoint['state_dict'])
         if args.use_ema:
@@ -328,7 +335,7 @@ def train(args, labeled_trainloader, unlabeled_trainloader, test_loader,
           model, optimizer, ema_model, scheduler):
     if args.amp:
         from apex import amp
-    global best_acc
+    global best_acc, best_epoch, best_acc_5
     test_accs = []
     end = time.time()
 
@@ -443,7 +450,8 @@ def train(args, labeled_trainloader, unlabeled_trainloader, test_loader,
             test_model = model
 
         if args.local_rank in [-1, 0]:
-            test_loss, test_acc = test(args, test_loader, test_model, epoch)
+            test_loss, test_acc_top1, test_acc_top5 = test(args, test_loader, test_model, epoch)
+            test_acc = test_acc_top1
 
             args.writer.add_scalar('train/1.train_loss', losses.avg, epoch)
             args.writer.add_scalar('train/2.train_loss_x', losses_x.avg, epoch)
@@ -454,6 +462,9 @@ def train(args, labeled_trainloader, unlabeled_trainloader, test_loader,
 
             is_best = test_acc > best_acc
             best_acc = max(test_acc, best_acc)
+            if is_best:
+                best_epoch = epoch
+                best_acc_5 = test_acc_top5 # note here the best_acc_5 is based on the best_acc top-1
 
             model_to_save = model.module if hasattr(model, "module") else model
             if args.use_ema:
@@ -465,12 +476,14 @@ def train(args, labeled_trainloader, unlabeled_trainloader, test_loader,
                 'ema_state_dict': ema_to_save.state_dict() if args.use_ema else None,
                 'acc': test_acc,
                 'best_acc': best_acc,
+                'best_epoch': best_epoch,
                 'optimizer': optimizer.state_dict(),
                 'scheduler': scheduler.state_dict(),
             }, is_best, args.out)
 
             test_accs.append(test_acc)
-            logger.info('Best top-1 acc: {:.2f}'.format(best_acc))
+            logger.info('Best scores: epoch {}, {:.2f} (top1), {:.2f} (top5)'.format(
+                best_epoch, best_acc, best_acc_5))
             logger.info('Mean top-1 acc: {:.2f}\n'.format(
                 np.mean(test_accs[-20:])))
 
@@ -519,9 +532,9 @@ def test(args, test_loader, model, epoch):
         if not args.no_progress:
             test_loader.close()
 
-    logger.info("top-1 acc: {:.2f}".format(top1.avg))
-    logger.info("top-5 acc: {:.2f}".format(top5.avg))
-    return losses.avg, top1.avg
+    logger.info("epoch {}, {:.2f} (top1), {:.2f} (top5)".format(epoch, top1.avg, top5.avg))
+
+    return losses.avg, top1.avg, top5.avg
 
 
 if __name__ == '__main__':
