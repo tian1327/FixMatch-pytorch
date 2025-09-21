@@ -6,7 +6,7 @@ import random
 import shutil
 import time
 from collections import OrderedDict
-
+import torch.nn as nn
 import numpy as np
 import torch
 import torch.nn.functional as F
@@ -82,7 +82,7 @@ def main():
     parser.add_argument("--expand-labels", action="store_true",
                         help="expand labels to fit eval steps")
     parser.add_argument('--arch', default='wideresnet', type=str,
-                        choices=['wideresnet', 'resnext', 'resnet50'],
+                        # choices=['wideresnet', 'resnext', 'resnet50'],
                         help='dataset name')
     parser.add_argument('--total-steps', default=2**20, type=int,
                         help='number of total steps to run')
@@ -172,6 +172,32 @@ def main():
                 del checkpoint['state_dict']['module.fc.weight']
                 model.load_state_dict(checkpoint['state_dict'], strict=False)
                 logger.info("==> Loaded INAT pre-trained model from {}".format(ckpt_path))
+        
+        elif args.arch.split("_")[0] == 'dinov2':
+            """ dinov2
+            """
+            model_name = args.arch
+            model_ft = torch.hub.load('facebookresearch/dinov2', model_name)
+            print('Loaded model: ', model_name)
+            # for name, module in model_ft.named_modules():
+                # print(name)
+            print(f'model_ft.linear_head.in_features: {model_ft.linear_head.in_features}')
+            print(f'model_ft.linear_head.out_features: {model_ft.linear_head.out_features}')
+            
+
+            # Assuming model_ft is your loaded model
+            # dummy_input = torch.randn(1, 3, 224, 224)  # Adjust the size of the input as per your model's requirement
+            # output = model_ft(dummy_input)
+            # print("Output size:", output.size())
+
+            # set_parameter_requires_grad(model_ft, feature_extract)
+            num_ftrs = model_ft.linear_head.in_features
+            # num_ftrs = 768
+            num_classes = 200
+            model_ft.linear_head = nn.Linear(num_ftrs, num_classes)
+            print(f'model_ft.linear_head.in_features: {model_ft.linear_head.in_features}')
+            print(f'model_ft.linear_head.out_features: {model_ft.linear_head.out_features}')
+            model = model_ft        
 
         logger.info("Total params: {:.2f}M".format(
             sum(p.numel() for p in model.parameters())/1e6))

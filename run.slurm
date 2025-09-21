@@ -4,7 +4,7 @@
 #SBATCH --get-user-env=L          # Replicate login environment
 
 ##NECESSARY JOB SPECIFICATIONS
-#SBATCH --job-name=aves_fixmatch
+#SBATCH --job-name=aves_fixmatch_dinov2
 ##SBATCH --account=132713661936
 #SBATCH --time=24:00:00
 #SBATCH --ntasks=12
@@ -22,8 +22,11 @@
 
 ##----------- execute python script
 #python train.py --dataset semi_aves --num-labeled 5959 --arch resnet50 --init inat --batch-size 32 --mu 5 --lambda-u 1.0 --lr 0.001 --wdecay 1e-4 --threshold 0.8 --total-steps 50000 --expand-labels --seed 1 --out results/fixmatch --no-progress
-python train.py --dataset semi_aves --num-labeled 5959 --arch resnet50 --init imagenet --batch-size 32 --mu 5 --lambda-u 1.0 --lr 0.001 --wdecay 1e-4 --threshold 0.8 --total-steps 50000 --expand-labels --seed 1 --out results/fixmatch --no-progress
+#python train.py --dataset semi_aves --num-labeled 5959 --arch resnet50 --init imagenet --batch-size 32 --mu 5 --lambda-u 1.0 --lr 0.001 --wdecay 1e-4 --threshold 0.8 --total-steps 50000 --expand-labels --seed 1 --out results/fixmatch --no-progress
 
+
+# use dinov2 backbone
+python train.py --dataset semi_aves --num-labeled 5959 --arch dinov2_vitb14_reg_lc --init scratch --batch-size 32 --mu 1 --lambda-u 0.0 --lr 0.001 --wdecay 1e-4  --threshold 0.8 --total-steps 15000 --expand-labels --seed 1 --out results/aves_fixmatch_dinov2_vitb14_reg_lc_bs32_mu1_lmd0.0_thd0.8_lr1e-3_wd1e-4_iter15000
 
 ##----------- Job Environment variables
 echo "Job ID: $SLURM_JOBID"
